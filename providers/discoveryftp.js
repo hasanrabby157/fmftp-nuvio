@@ -21,14 +21,6 @@ function safeDecode(s) {
   try { return decodeURIComponent(s); } catch (e) { return s; }
 }
 
-function fmtSize(bytes) {
-  bytes = Number(bytes);
-  if (!bytes || bytes < 1) return "";
-  var gb = bytes / 1073741824;
-  if (gb >= 1) return gb.toFixed(2).replace(/\.?0+$/, "") + "GB";
-  return Math.round(bytes / 1048576) + "MB";
-}
-
 // Gives up after ms milliseconds and returns fallback instead
 function withTimeout(p, ms, fallback) {
   return new Promise(function (resolve) {
@@ -45,17 +37,6 @@ function withTimeout(p, ms, fallback) {
     }
     p.then(finish, function () { finish(fallback); });
   });
-}
-
-async function probeSize(url) {
-  try {
-    var r = await fetch(url, { headers: { Range: "bytes=0-0" } });
-    var cr = (r.headers && r.headers.get && r.headers.get("content-range")) || "";
-    var m = cr.match(/\/(\d+)\s*$/);
-    return m ? fmtSize(Number(m[1])) : "";
-  } catch (e) {
-    return "";
-  }
 }
 
 async function getText(url) {
@@ -138,23 +119,18 @@ function parseInfo(text) {
 
 async function buildFromResult(r) {
   try {
-    var html = await withTimeout(getText(SITE + "/m/view/" + r.id), 7000, "");
-    var text = html;
-    var lm = html.match(/\/m\/lazyload\/\d+\/\d+/);
-    if (lm) {
-      var lz = await withTimeout(getText(SITE + lm[0]), 6000, "");
-      text += "\n" + lz;
-    }
-    var links = extractLinks(text);
+    var html = await withTimeout(getText(SITE + "/m/view/" + r.id), 8000, "");
+    var links = extractLinks(html);
+    var sm = html.match(/badge-fill">[^<|]*\|\s*([\d.]+)\s*(GB|MB)/i);
+    var size = sm ? sm[1] + sm[2].toUpperCase() : "";
 
     if (links.length) {
-      return await Promise.all(links.map(async function (u) {
+      return links.map(function (u) {
         var file = safeDecode(u.split("?")[0].split("/").pop());
         var info = parseInfo(file + " " + r.quality);
         var d = [];
         if (info.q) d.push(info.q);
         d = d.concat(info.tags);
-        var size = await withTimeout(probeSize(u), 3000, "");
         if (size) d.push(size);
         var ext = file.indexOf(".") >= 0 ? file.split(".").pop().toUpperCase() : "";
         if (ext && ext.length <= 4) d.push(ext);
@@ -165,7 +141,7 @@ async function buildFromResult(r) {
           url: u,
           quality: info.q || "Unknown"
         };
-      }));
+      });
     }
   } catch (e) {}
 
@@ -203,7 +179,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
     var hits = [];
     for (var i = 0; i < tries.length && hits.length === 0; i++) {
-      var list = await withTimeout(searchSite(tries[i]), 7000, []);
+      var list = await withTimeout(searchSite(tries[i]), 8000, []);
       hits = list.filter(function (r) {
         if (!same(r.title, title)) return false;
         if (!year || !r.year) return true;
