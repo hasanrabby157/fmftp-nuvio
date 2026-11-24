@@ -136,12 +136,13 @@ async function buildFromResult(r) {
         if (ext && ext.length <= 4) d.push(ext);
         if (r.category) d.push(r.category);
         return {
-  name: "DFTP • " + d.join(" • "),
-title: r.title + " (" + r.year + ")\n" + file,
-  url: u,
-  quality: info.q || "Unknown"
-};
-    });
+          name: "DFTP • " + d.join(" • "),
+          title: r.title + " (" + r.year + ")\n" + file,
+          url: u,
+          quality: info.q || "Unknown"
+        };
+      });
+    }
   } catch (e) {}
 
   // Fallback: the site's stream playlist
