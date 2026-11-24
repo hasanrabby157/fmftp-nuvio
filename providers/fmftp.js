@@ -35,10 +35,33 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     });
 
     return hits.map(function (m) {
-      var q = getQuality(m.file_path);
+      var path = String(m.file_path || "");
+      var file = path.split("/").pop();
+      var ext = (file.split(".").pop() || "").toUpperCase();
+      var q = getQuality(path);
+      var tags = [];
+      [
+        [/blu-?ray|bdrip|brrip/i, "BluRay"],
+        [/web-?dl/i, "WEB-DL"],
+        [/webrip/i, "WEBRip"],
+        [/hdrip/i, "HDRip"],
+        [/dvdrip/i, "DVDRip"],
+        [/hdcam|camrip|\bcam\b/i, "CAM"],
+        [/x265|hevc/i, "HEVC"],
+        [/x264|h\.?264/i, "x264"],
+        [/10bit/i, "10-bit"],
+        [/hdr/i, "HDR"],
+        [/dual|hin(di)?[ ._-]?(eng|dub)/i, "Dual Audio"],
+        [/atmos/i, "Atmos"],
+        [/5\.1/, "5.1"]
+      ].forEach(function (t) {
+        if (t[0].test(file) && tags.indexOf(t[1]) < 0) tags.push(t[1]);
+      });
+      var info = [q].concat(tags);
+      if (ext) info.push(ext);
       return {
         name: "FMFTP",
-        title: m.title + " (" + m.year + ")",
+        title: m.title + " (" + m.year + ")\n" + info.join(" • ") + "\n" + file,
         url: SITE + "/api/stream/video/stream?type=movies&id=" + m.id,
         quality: q
       };
