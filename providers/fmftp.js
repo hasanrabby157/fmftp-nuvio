@@ -1,5 +1,4 @@
 // FMFTP provider for Nuvio Local Scrapers (movies only). Works on BDIX connections.
-// Put your free TMDB API key below (themoviedb.org -> Settings -> API).
 var TMDB_KEY = "10d2fc3b3aabcd9b135b95f4b6529580";
 var SITE = "https://fmftp.net";
 
@@ -57,11 +56,11 @@ async function getStreams(tmdbId, mediaType, season, episode) {
       ].forEach(function (t) {
         if (t[0].test(file) && tags.indexOf(t[1]) < 0) tags.push(t[1]);
       });
-      var info = [q].concat(tags);
-      if (ext) info.push(ext);
+      var details = [q].concat(tags);
+      if (ext) details.push(ext);
       return {
-        name: "FMFTP • " + info.join(" • "),
-        title: m.title + " (" + m.year + ")\n" + info.join(" • ") + "\n" + file,
+        name: "FMFTP • " + details.join(" • "),
+        title: m.title + " (" + m.year + ")\n" + details.join(" • ") + "\n" + file,
         url: SITE + "/api/stream/video/stream?type=movies&id=" + m.id,
         quality: q
       };
