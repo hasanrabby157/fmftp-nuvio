@@ -14,10 +14,10 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     var tmdbRes = await fetch(
       "https://api.themoviedb.org/3/movie/" + tmdbId + "?api_key=" + TMDB_KEY
     );
-    var info = await tmdbRes.json();
-    var title = info.title || info.original_title;
+    var tm = await tmdbRes.json();
+    var title = tm.title || tm.original_title;
     if (!title) return [];
-    var year = (info.release_date || "").slice(0, 4);
+    var year = (tm.release_date || "").slice(0, 4);
 
     var searchRes = await fetch(SITE + "/api/search?search=" + encodeURIComponent(title));
     var list = await searchRes.json();
@@ -25,6 +25,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
     var seen = {};
     var hits = list.filter(function (m) {
+      if (m.type && m.type !== "movie") return false;
       var ok =
         String(m.tmdb_id) === String(tmdbId) ||
         ((m.title || "").toLowerCase() === title.toLowerCase() && String(m.year) === year);
@@ -57,7 +58,10 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         if (t[0].test(file) && tags.indexOf(t[1]) < 0) tags.push(t[1]);
       });
       var details = [q].concat(tags);
+      var sz = file.match(/(\d+(?:\.\d+)?)\s?(GB|MB)/i);
+      if (sz) details.push(sz[1] + sz[2].toUpperCase());
       if (ext) details.push(ext);
+      if (m.Library && m.Library.name) details.push(m.Library.name);
       return {
         name: "FMFTP • " + details.join(" • "),
         title: m.title + " (" + m.year + ")\n" + details.join(" • ") + "\n" + file,
