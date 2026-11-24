@@ -18,6 +18,13 @@ function same(a, b) {
   return x !== "" && x === y;
 }
 
+function fmtSize(bytes) {
+  if (!bytes || bytes < 1) return "";
+  var gb = bytes / 1073741824;
+  if (gb >= 1) return gb.toFixed(2).replace(/\.?0+$/, "") + "GB";
+  return Math.round(bytes / 1048576) + "MB";
+}
+
 async function searchSite(title) {
   var clean = String(title || "")
     .replace(/['’`"]/g, "")
@@ -30,11 +37,33 @@ async function searchSite(title) {
   return Array.isArray(list) ? list : [];
 }
 
-function movieDetails(m) {
-  var path = String(m.file_path || "");
-  var file = path.split("/").pop();
-  var ext = (file.split(".").pop() || "").toUpperCase();
-  var q = getQuality(path);
+// Ask the video server for size / type / file name (reads headers only)
+async function probe(url) {
+  var info = { size: "", type: "", file: "" };
+  try {
+    var r = await fetch(url, { headers: { Range: "bytes=0-0" } });
+    var h = r.headers;
+    var get = function (k) {
+      try { return (h && h.get && h.get(k)) || ""; } catch (e) { return ""; }
+    };
+    var mm = get("content-range").match(/\/(\d+)\s*$/);
+    if (mm) info.size = fmtSize(Number(mm[1]));
+    var ct = get("content-type").toLowerCase();
+    if (ct.indexOf("matroska") >= 0) info.type = "MKV";
+    else if (ct.indexOf("mp4") >= 0) info.type = "MP4";
+    else if (ct.indexOf("msvideo") >= 0) info.type = "AVI";
+    else if (ct.indexOf("webm") >= 0) info.type = "WEBM";
+    var fm = get("content-disposition").match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+    if (fm) {
+      try { info.file = decodeURIComponent(fm[1]); } catch (e) { info.file = fm[1]; }
+    }
+  } catch (e) {}
+  return info;
+}
+
+function parseFile(file) {
+  file = String(file || "");
+  var q = getQuality(file);
   var tags = [];
   [
     [/blu-?ray|bdrip|brrip/i, "BluRay"],
@@ -53,12 +82,23 @@ function movieDetails(m) {
   ].forEach(function (t) {
     if (t[0].test(file) && tags.indexOf(t[1]) < 0) tags.push(t[1]);
   });
-  var details = [q].concat(tags);
+  var ext = file.indexOf(".") >= 0 ? file.split(".").pop().toUpperCase() : "";
+  if (ext.length > 4) ext = "";
   var sz = file.match(/(\d+(?:\.\d+)?)\s?(GB|MB)/i);
-  if (sz) details.push(sz[1] + sz[2].toUpperCase());
-  if (ext) details.push(ext);
-  if (m.Library && m.Library.name) details.push(m.Library.name);
-  return { q: q, details: details, file: file };
+  return { q: q, tags: tags, ext: ext, size: sz ? sz[1] + sz[2].toUpperCase() : "" };
+}
+
+function buildDetails(file, pr, lib) {
+  var f = parseFile(file);
+  var d = [];
+  if (f.q !== "Unknown") d.push(f.q);
+  d = d.concat(f.tags);
+  var size = f.size || (pr && pr.size) || "";
+  if (size) d.push(size);
+  var type = f.ext || (pr && pr.type) || "";
+  if (type) d.push(type);
+  if (lib) d.push(lib);
+  return { q: f.q, list: d };
 }
 
 async function getStreams(tmdbId, mediaType, season, episode) {
@@ -91,15 +131,20 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         return true;
       });
 
-      return hits.map(function (m) {
-        var d = movieDetails(m);
+      return await Promise.all(hits.map(async function (m) {
+        var url = SITE + "/api/stream/video/stream?type=movies&id=" + m.id;
+        var file = String(m.file_path).split("/").pop();
+        var pr = await probe(url);
+        var lib = m.Library && m.Library.name ? m.Library.name : "";
+        var d = buildDetails(file, pr, lib);
+        var label = d.list.join(" • ");
         return {
-          name: "FMFTP • " + d.details.join(" • "),
-          title: m.title + " (" + m.year + ")\n" + d.details.join(" • ") + "\n" + d.file,
-          url: SITE + "/api/stream/video/stream?type=movies&id=" + m.id,
+          name: "FMFTP" + (label ? " • " + label : ""),
+          title: m.title + " (" + m.year + ")\n" + file,
+          url: url,
           quality: d.q
         };
-      });
+      }));
     }
 
     // ---------- TV SERIES ----------
@@ -124,12 +169,16 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                Number(e.episode_number) === Number(episode);
       })[0];
       if (!ep) continue;
-      var lib = det.Library && det.Library.name ? det.Library.name : "";
+      var lib2 = det.Library && det.Library.name ? det.Library.name : "";
+      var epUrl = SITE + "/api/stream/video/stream?type=tv_shows&id=" + ep.id;
+      var pr2 = await probe(epUrl);
+      var d2 = buildDetails(pr2.file, pr2, lib2);
+      var label2 = d2.list.join(" • ");
       out.push({
-        name: "FMFTP • " + tag + (lib ? " • " + lib : ""),
-        title: s.title + " " + tag + (ep.name ? " - " + ep.name : "") + (lib ? "\n" + lib : ""),
-        url: SITE + "/api/stream/video/stream?type=tv_shows&id=" + ep.id,
-        quality: "Unknown"
+        name: "FMFTP • " + tag + (label2 ? " • " + label2 : ""),
+        title: s.title + " " + tag + (ep.name ? " - " + ep.name : "") + (pr2.file ? "\n" + pr2.file : ""),
+        url: epUrl,
+        quality: d2.q
       });
     }
     return out;
