@@ -140,8 +140,8 @@ async function buildFromResult(r) {
   title: "URL: " + u,
   url: u,
   quality: info.q || "Unknown"
-});
-    }
+};
+    });
   } catch (e) {}
 
   // Fallback: the site's stream playlist
