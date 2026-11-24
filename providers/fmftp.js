@@ -60,7 +60,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
       var info = [q].concat(tags);
       if (ext) info.push(ext);
       return {
-        name: "FMFTP",
+        name: "FMFTP • " + info.join(" • "),
         title: m.title + " (" + m.year + ")\n" + info.join(" • ") + "\n" + file,
         url: SITE + "/api/stream/video/stream?type=movies&id=" + m.id,
         quality: q
