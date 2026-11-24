@@ -1,12 +1,12 @@
 {
   "name": "FMFTP Nuvio Plugin",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "scrapers": [
     {
       "id": "fmftp",
       "name": "FMFTP (BDIX)",
       "description": "Movies and series from fmftp.net. Works only on BDIX connections.",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "You",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/fmftp.js",
