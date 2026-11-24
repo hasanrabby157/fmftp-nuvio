@@ -29,6 +29,24 @@ function fmtSize(bytes) {
   return Math.round(bytes / 1048576) + "MB";
 }
 
+// Gives up after ms milliseconds and returns fallback instead
+function withTimeout(p, ms, fallback) {
+  return new Promise(function (resolve) {
+    var done = false;
+    var t = null;
+    function finish(v) {
+      if (done) return;
+      done = true;
+      if (t && typeof clearTimeout === "function") clearTimeout(t);
+      resolve(v);
+    }
+    if (typeof setTimeout === "function") {
+      t = setTimeout(function () { finish(fallback); }, ms);
+    }
+    p.then(finish, function () { finish(fallback); });
+  });
+}
+
 async function probeSize(url) {
   try {
     var r = await fetch(url, { headers: { Range: "bytes=0-0" } });
@@ -38,6 +56,11 @@ async function probeSize(url) {
   } catch (e) {
     return "";
   }
+}
+
+async function getText(url) {
+  var r = await fetch(url);
+  return await r.text();
 }
 
 async function searchSite(term) {
@@ -72,19 +95,16 @@ async function searchSite(term) {
 }
 
 function extractLinks(text) {
+  text = String(text || "").replace(/\\\//g, "/").replace(/&amp;/g, "&");
   var found = [];
-  var re = /href=["'](https?:\/\/[^"']*discoveryftp\.net[^"']*\.(?:mkv|mp4|m3u8|avi|webm))["']/gi;
+  var re = /https?:\/\/[a-z0-9.-]*discoveryftp\.net\/[^"'<>#\\]+?\.(?:mkv|mp4|m3u8|avi|webm)(?=["'\s<>#?)]|$)/gi;
   var m;
-  while ((m = re.exec(text)) !== null) found.push(m[1]);
-  if (!found.length) {
-    var re2 = /https?:\/\/[a-z0-9.-]*discoveryftp\.net\/[^"'\s<>#\\]+?\.(?:mkv|mp4|m3u8|avi|webm)/gi;
-    while ((m = re2.exec(text)) !== null) found.push(m[0]);
-  }
+  while ((m = re.exec(text)) !== null) found.push(m[0]);
   var seen = {};
   return found
     .map(function (u) { return decodeHtml(u).replace(/ /g, "%20"); })
     .filter(function (u) {
-      if (/poster|\/media\/|images\d*\./i.test(u)) return false;
+      if (/\/\/images\d*\./i.test(u) || /poster|\/media\//i.test(u)) return false;
       if (seen[u]) return false;
       seen[u] = true;
       return true;
@@ -94,7 +114,7 @@ function extractLinks(text) {
 function parseInfo(text) {
   var tags = [];
   [
-    [/blu-?ray|bdrip|brrip/i, "BluRay"],
+    [/blu-?ray|bdrip|brrip|720p-br/i, "BluRay"],
     [/web-?dl/i, "WEB-DL"],
     [/web-?r\b|webrip/i, "WEBRip"],
     [/hdrip/i, "HDRip"],
@@ -116,6 +136,54 @@ function parseInfo(text) {
   return { q: res, tags: tags };
 }
 
+async function buildFromResult(r) {
+  try {
+    var html = await withTimeout(getText(SITE + "/m/view/" + r.id), 7000, "");
+    var text = html;
+    var lm = html.match(/\/m\/lazyload\/\d+\/\d+/);
+    if (lm) {
+      var lz = await withTimeout(getText(SITE + lm[0]), 6000, "");
+      text += "\n" + lz;
+    }
+    var links = extractLinks(text);
+
+    if (links.length) {
+      return await Promise.all(links.map(async function (u) {
+        var file = safeDecode(u.split("?")[0].split("/").pop());
+        var info = parseInfo(file + " " + r.quality);
+        var d = [];
+        if (info.q) d.push(info.q);
+        d = d.concat(info.tags);
+        var size = await withTimeout(probeSize(u), 3000, "");
+        if (size) d.push(size);
+        var ext = file.indexOf(".") >= 0 ? file.split(".").pop().toUpperCase() : "";
+        if (ext && ext.length <= 4) d.push(ext);
+        if (r.category) d.push(r.category);
+        return {
+          name: "DFTP • " + d.join(" • "),
+          title: r.title + " (" + r.year + ")\n" + file,
+          url: u,
+          quality: info.q || "Unknown"
+        };
+      }));
+    }
+  } catch (e) {}
+
+  // Fallback: the site's stream playlist
+  var info2 = parseInfo(r.quality);
+  var d2 = [];
+  if (info2.q) d2.push(info2.q);
+  d2 = d2.concat(info2.tags);
+  d2.push("Stream");
+  if (r.category) d2.push(r.category);
+  return [{
+    name: "DFTP • " + d2.join(" • "),
+    title: r.title + " (" + r.year + ")",
+    url: SITE + "/m/playlist/" + r.id,
+    quality: info2.q || "Unknown"
+  }];
+}
+
 async function getStreams(tmdbId, mediaType, season, episode) {
   try {
     if (mediaType !== "movie") return [];
@@ -135,7 +203,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
     var hits = [];
     for (var i = 0; i < tries.length && hits.length === 0; i++) {
-      var list = await searchSite(tries[i]);
+      var list = await withTimeout(searchSite(tries[i]), 7000, []);
       hits = list.filter(function (r) {
         if (!same(r.title, title)) return false;
         if (!year || !r.year) return true;
@@ -144,61 +212,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     }
     if (!hits.length) return [];
 
-    var results = await Promise.all(hits.map(async function (r) {
-      try {
-        var vRes = await fetch(SITE + "/m/view/" + r.id);
-        var html = await vRes.text();
-        var text = html;
-        var lm = html.match(new RegExp("lazyload/" + r.id + "/(\\d+)"));
-        if (lm) {
-          try {
-            var lRes = await fetch(SITE + "/m/lazyload/" + r.id + "/" + lm[1]);
-            text += "\n" + (await lRes.text());
-          } catch (e) {}
-        }
-        var links = extractLinks(text);
-        var streams = [];
-
-        if (links.length) {
-          for (var k = 0; k < links.length; k++) {
-            var u = links[k];
-            var file = safeDecode(u.split("?")[0].split("/").pop());
-            var info = parseInfo(file + " " + r.quality);
-            var d = [];
-            if (info.q) d.push(info.q);
-            d = d.concat(info.tags);
-            var size = await probeSize(u);
-            if (size) d.push(size);
-            var ext = file.indexOf(".") >= 0 ? file.split(".").pop().toUpperCase() : "";
-            if (ext && ext.length <= 4) d.push(ext);
-            if (r.category) d.push(r.category);
-            streams.push({
-              name: "DFTP • " + d.join(" • "),
-              title: r.title + " (" + r.year + ")\n" + file,
-              url: u,
-              quality: info.q || "Unknown"
-            });
-          }
-        } else {
-          var info2 = parseInfo(r.quality);
-          var d2 = [];
-          if (info2.q) d2.push(info2.q);
-          d2 = d2.concat(info2.tags);
-          d2.push("HLS");
-          if (r.category) d2.push(r.category);
-          streams.push({
-            name: "DFTP • " + d2.join(" • "),
-            title: r.title + " (" + r.year + ")",
-            url: SITE + "/m/playlist/" + r.id,
-            quality: info2.q || "Unknown"
-          });
-        }
-        return streams;
-      } catch (e) {
-        return [];
-      }
-    }));
-
+    var results = await Promise.all(hits.map(buildFromResult));
     return results.reduce(function (a, b) { return a.concat(b); }, []);
   } catch (e) {
     return [];
