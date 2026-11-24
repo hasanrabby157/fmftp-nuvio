@@ -1,12 +1,12 @@
 {
   "name": "BDIX Plugins",
-  "version": "1.1.0",
+  "version": "1.3.0",
   "scrapers": [
     {
       "id": "fmftp",
       "name": "FMFTP (BDIX)",
       "description": "Movies and series from fmftp.net. Works only on BDIX connections.",
-      "version": "1.1.0",
+      "version": "1.3.0",
       "author": "You",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/fmftp.js",
@@ -17,14 +17,26 @@
     {
       "id": "ctgmovies",
       "name": "CTGMovies (BDIX)",
-      "description": "Movies from ctgmovies.com. Works only on BDIX connections.",
-      "version": "1.0.0",
+      "description": "Movies and series from ctgmovies.com. Works only on BDIX connections.",
+      "version": "1.3.0",
       "author": "You",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/ctgmovies.js",
       "enabled": true,
       "formats": ["mp4", "mkv"],
       "contentLanguage": ["en", "hi", "bn"]
+    },
+    {
+      "id": "discoveryftp",
+      "name": "DiscoveryFTP (BDIX)",
+      "description": "Movies from discoveryftp.net. Works only on BDIX connections.",
+      "version": "1.0.0",
+      "author": "You",
+      "supportedTypes": ["movie"],
+      "filename": "providers/discoveryftp.js",
+      "enabled": true,
+      "formats": ["mp4", "mkv"],
+      "contentLanguage": ["en", "hi", "bn", "ta"]
     }
   ]
 }
