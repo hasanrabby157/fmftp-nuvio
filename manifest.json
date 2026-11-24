@@ -20,7 +20,7 @@
       "description": "Movies from ctgmovies.com. Works only on BDIX connections.",
       "version": "1.0.0",
       "author": "You",
-      "supportedTypes": ["movie"],
+      "supportedTypes": ["movie", "tv"],
       "filename": "providers/ctgmovies.js",
       "enabled": true,
       "formats": ["mp4", "mkv"],
