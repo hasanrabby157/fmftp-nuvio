@@ -136,8 +136,8 @@ async function buildFromResult(r) {
         if (ext && ext.length <= 4) d.push(ext);
         if (r.category) d.push(r.category);
         return {
-  name: "DEBUG • " + file,
-  title: "URL: " + u,
+  name: "DEBUG URL: " + u,
+  title: "DEBUG URL: " + u,
   url: u,
   quality: info.q || "Unknown"
 };
