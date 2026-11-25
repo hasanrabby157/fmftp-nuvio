@@ -1,6 +1,6 @@
 {
   "name": "BDIX Plugins",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "scrapers": [
     {
       "id": "fmftp",
@@ -30,9 +30,9 @@
       "id": "discoveryftp",
       "name": "DiscoveryFTP (BDIX)",
       "description": "Movies from discoveryftp.net. Works only on BDIX connections.",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "author": "You",
-      "supportedTypes": ["movie"],
+      "supportedTypes": ["movie", "tv"],
       "filename": "providers/discoveryftp.js",
       "enabled": true,
       "formats": ["mp4", "mkv"],
