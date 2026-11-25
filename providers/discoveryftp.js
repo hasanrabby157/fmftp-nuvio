@@ -1,4 +1,4 @@
-// DiscoveryFTP provider for Nuvio Local Scrapers (movies only). Works on BDIX connections.
+// DiscoveryFTP provider for Nuvio Local Scrapers (movies + series). Works on BDIX connections.
 var TMDB_KEY = "10d2fc3b3aabcd9b135b95f4b6529580";
 var SITE = "https://movies.discoveryftp.net";
 
@@ -6,6 +6,11 @@ function same(a, b) {
   var x = String(a || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   var y = String(b || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   return x !== "" && x === y;
+}
+
+function pad(n) {
+  n = Number(n);
+  return n < 10 ? "0" + n : String(n);
 }
 
 function decodeHtml(s) {
@@ -21,7 +26,6 @@ function safeDecode(s) {
   try { return decodeURIComponent(s); } catch (e) { return s; }
 }
 
-// Gives up after ms milliseconds and returns fallback instead
 function withTimeout(p, ms, fallback) {
   return new Promise(function (resolve) {
     var done = false;
@@ -44,22 +48,22 @@ async function getText(url) {
   return await r.text();
 }
 
-async function searchSite(term) {
+async function searchSite(term, type) {
   var res = await fetch(SITE + "/search", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       "X-Requested-With": "XMLHttpRequest"
     },
-    body: "term=" + encodeURIComponent(term) + "&types=m"
+    body: "term=" + encodeURIComponent(term) + "&types=" + type
   });
   var html = await res.text();
   var chunks = html.split("moviesearchiteam").slice(1);
   var out = [];
   chunks.forEach(function (c) {
-    var id = c.match(/\/m\/view\/(\d+)/);
+    var id = c.match(/\/[ms]\/view\/(\d+)/);
     var t = c.match(/class="searchtitle"\s*>([^<]*)</);
-    var y = c.match(/Year\s*:\s*(\d{4})/);
+    var y = c.match(/Year\s*:\s*(\d{4})/) || c.match(/Air\s*:\s*(\d{4})/);
     var cat = c.match(/Category:\s*([^<]+)/);
     var q = c.match(/Quality:\s*([^<]+)/);
     if (id && t) {
@@ -101,14 +105,14 @@ function parseInfo(text) {
     [/hdrip/i, "HDRip"],
     [/dvdrip/i, "DVDRip"],
     [/hdcam|camrip|\bcam\b/i, "CAM"],
-    [/x265|hevc/i, "HEVC"],
-    [/x264|h\.?264/i, "x264"],
+    [/x265|hevc|h[ ._]?265/i, "HEVC"],
+    [/x264|h[ ._]?264/i, "x264"],
     [/10bit/i, "10-bit"],
     [/hdr/i, "HDR"],
     [/dual|multi/i, "Dual Audio"],
     [/esub/i, "ESub"],
     [/atmos/i, "Atmos"],
-    [/ddp?5\.1|5\.1/i, "5.1"]
+    [/ddp?[ ._]?5[ ._]?1|5\.1/i, "5.1"]
   ].forEach(function (t) {
     if (t[0].test(text) && tags.indexOf(t[1]) < 0) tags.push(t[1]);
   });
@@ -117,7 +121,8 @@ function parseInfo(text) {
   return { q: res, tags: tags };
 }
 
-async function buildFromResult(r) {
+// ---------- MOVIES ----------
+async function buildMovie(r) {
   try {
     var html = await withTimeout(getText(SITE + "/m/view/" + r.id), 8000, "");
     var links = extractLinks(html);
@@ -145,7 +150,6 @@ async function buildFromResult(r) {
     }
   } catch (e) {}
 
-  // Fallback: the site's stream playlist
   var info2 = parseInfo(r.quality);
   var d2 = [];
   if (info2.q) d2.push(info2.q);
@@ -160,17 +164,113 @@ async function buildFromResult(r) {
   }];
 }
 
+// ---------- SERIES ----------
+function seasonEpisodeOf(url) {
+  var dec = safeDecode(url);
+  var file = dec.split("?")[0].split("/").pop();
+  var m = file.match(/S(\d{1,2})\s*[._ -]?\s*E(\d{1,3})/i);
+  if (m) return { s: Number(m[1]), e: Number(m[2]) };
+  var sf = dec.match(/Season[ ._-]*0*(\d{1,2})/i);
+  var ef = file.match(/(?:^|[^a-z0-9])E(?:p|pisode)?[ ._-]*0*(\d{1,3})(?![0-9])/i) ||
+           file.match(/(?:^|[^0-9])0*(\d{1,2})x0*(\d{1,3})(?![0-9])/i);
+  if (sf && ef) return { s: Number(sf[1]), e: Number(ef[ef.length - 1]) };
+  return null;
+}
+
+function absUrl(base, href) {
+  href = decodeHtml(href);
+  if (/^https?:\/\//i.test(href)) return href;
+  var origin = (base.match(/^https?:\/\/[^\/]+/i) || [""])[0];
+  if (href.charAt(0) === "/") return origin + href;
+  return base.replace(/[^\/]*$/, "") + href;
+}
+
+async function listFolder(url) {
+  var html = await withTimeout(getText(url), 7000, "");
+  var out = { videos: [], folders: [] };
+  var re = /href=["']([^"'#?]+)["']/gi;
+  var m;
+  while ((m = re.exec(html)) !== null) {
+    var h = m[1];
+    if (h === "../" || h === "/" || h.charAt(0) === "?") continue;
+    var full = absUrl(url, h).replace(/ /g, "%20");
+    if (/\.(mkv|mp4|avi|webm)$/i.test(full)) out.videos.push(full);
+    else if (/\/$/.test(full) && full !== url) out.folders.push(full);
+  }
+  return out;
+}
+
+async function folderFallback(html, season) {
+  var found = [];
+  var re = /https?:\/\/[a-z0-9.-]*discoveryftp\.net\/[^"'<>#\\]+\//gi;
+  var m;
+  var folders = [];
+  var seen = {};
+  while ((m = re.exec(String(html || ""))) !== null) {
+    var f = decodeHtml(m[0]).replace(/ /g, "%20");
+    var depth = f.replace(/^https?:\/\/[^\/]+\//, "").split("/").filter(Boolean).length;
+    if (depth < 2 || /images\d*\.|\/media\/|\/assets\//i.test(f) || seen[f]) continue;
+    seen[f] = true;
+    folders.push(f);
+  }
+  for (var i = 0; i < Math.min(folders.length, 2); i++) {
+    var top = await listFolder(folders[i]);
+    found = found.concat(top.videos);
+    for (var j = 0; j < top.folders.length; j++) {
+      var name = safeDecode(top.folders[j]);
+      if (new RegExp("season[ ._-]*0*" + Number(season) + "(?![0-9])", "i").test(name)) {
+        var sub = await listFolder(top.folders[j]);
+        found = found.concat(sub.videos);
+      }
+    }
+  }
+  return found;
+}
+
+async function buildSeries(r, season, episode) {
+  var html = await withTimeout(getText(SITE + "/s/view/" + r.id), 8000, "");
+  var links = extractLinks(html);
+  if (!links.length) {
+    links = await withTimeout(folderFallback(html, season), 12000, []);
+  }
+  var tag = "S" + pad(season) + "E" + pad(episode);
+  var seen = {};
+  var out = [];
+  links.forEach(function (u) {
+    var se = seasonEpisodeOf(u);
+    if (!se || se.s !== Number(season) || se.e !== Number(episode)) return;
+    if (seen[u]) return;
+    seen[u] = true;
+    var file = safeDecode(u.split("?")[0].split("/").pop());
+    var info = parseInfo(file);
+    var d = [tag];
+    if (info.q) d.push(info.q);
+    d = d.concat(info.tags);
+    var ext = file.indexOf(".") >= 0 ? file.split(".").pop().toUpperCase() : "";
+    if (ext && ext.length <= 4) d.push(ext);
+    out.push({
+      name: "DFTP • " + d.join(" • "),
+      title: r.title + " " + tag + "\n" + file,
+      url: u,
+      quality: info.q || "Unknown"
+    });
+  });
+  return out;
+}
+
 async function getStreams(tmdbId, mediaType, season, episode) {
   try {
-    if (mediaType !== "movie") return [];
+    var isTv = mediaType === "tv" || mediaType === "series";
+    if (mediaType !== "movie" && !isTv) return [];
 
     var tmRes = await fetch(
-      "https://api.themoviedb.org/3/movie/" + tmdbId + "?api_key=" + TMDB_KEY
+      "https://api.themoviedb.org/3/" + (isTv ? "tv" : "movie") + "/" + tmdbId + "?api_key=" + TMDB_KEY
     );
     var tm = await tmRes.json();
-    var title = tm.title || tm.original_title;
+    var title = isTv ? (tm.name || tm.original_name) : (tm.title || tm.original_title);
     if (!title) return [];
-    var year = Number((tm.release_date || "").slice(0, 4)) || 0;
+    var dateStr = isTv ? tm.first_air_date : tm.release_date;
+    var year = Number((dateStr || "").slice(0, 4)) || 0;
 
     var clean = title.replace(/['’`"]/g, "").replace(/[^a-zA-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
     var tries = [clean];
@@ -179,7 +279,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
     var hits = [];
     for (var i = 0; i < tries.length && hits.length === 0; i++) {
-      var list = await withTimeout(searchSite(tries[i]), 8000, []);
+      var list = await withTimeout(searchSite(tries[i], isTv ? "s" : "m"), 8000, []);
       hits = list.filter(function (r) {
         if (!same(r.title, title)) return false;
         if (!year || !r.year) return true;
@@ -188,7 +288,14 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     }
     if (!hits.length) return [];
 
-    var results = await Promise.all(hits.map(buildFromResult));
+    var results;
+    if (isTv) {
+      results = await Promise.all(hits.map(function (r) {
+        return buildSeries(r, season, episode).catch(function () { return []; });
+      }));
+    } else {
+      results = await Promise.all(hits.map(buildMovie));
+    }
     return results.reduce(function (a, b) { return a.concat(b); }, []);
   } catch (e) {
     return [];
